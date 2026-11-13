@@ -89,20 +89,27 @@ if DRY_RUN:
     print("DRY RUN PASSED! Gemini 3.8 Flash, GCP credentials, and YouTube OAuth token are all valid ($0.00 cost).")
     raise SystemExit(0)
 
-# 5. Generate 9:16 Vertical Artwork via Imagen 3
+# 5. Generate 9:16 Vertical Artwork via Gemini Native Image Generation
 print("Generating 9:16 artwork...")
-img_resp = client.models.generate_images(
-    model="imagen-3.0-generate-002",
-    prompt=story_data["image_prompt"],
-    config=types.GenerateImagesConfig(
-        number_of_images=1,
-        aspect_ratio="9:16",
-        output_mime_type="image/jpeg",
+img_resp = client.models.generate_content(
+    model="gemini-2.5-flash-image",
+    contents=story_data["image_prompt"],
+    config=types.GenerateContentConfig(
+        response_modalities=["IMAGE"],
+        image_config=types.ImageConfig(aspect_ratio="9:16"),
     ),
 )
-img_path = "frame.jpg"
-with open(img_path, "wb") as f:
-    f.write(img_resp.generated_images[0].image.image_bytes)
+img_path = "frame.png"
+image_saved = False
+for part in img_resp.candidates[0].content.parts:
+    if part.inline_data is not None:
+        with open(img_path, "wb") as f:
+            f.write(part.inline_data.data)
+        image_saved = True
+        break
+
+if not image_saved:
+    raise RuntimeError("No image bytes were returned by gemini-2.5-flash-image.")
 
 # 6. Generate Neural Voiceover via Google Cloud TTS
 print("Synthesizing voiceover...")
