@@ -9,6 +9,10 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
+DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
+if DRY_RUN:
+    print("=== DRY RUN MODE ENABLED (Skipping image gen, FFmpeg render, YouTube upload & topics.json update) ===")
+
 # 1. Initialize Gemini Client
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
@@ -27,7 +31,7 @@ if not pending:
         "Return ONLY a JSON array of strings."
     )
     refill_resp = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-3.8-flash",
         contents=refill_prompt,
         config=types.GenerateContentConfig(response_mime_type="application/json"),
     )
@@ -66,13 +70,26 @@ Return ONLY valid JSON with these exact keys:
 """
 
 story_resp = client.models.generate_content(
-    model="gemini-2.5-flash",
+    model="gemini-3.8-flash",
     contents=script_prompt,
     config=types.GenerateContentConfig(response_mime_type="application/json"),
 )
 story_data = json.loads(story_resp.text)
+print("Generated Title:", story_data["yt_title"])
+print("Generated Narration:", story_data["narration"])
 
-# 4. Generate 9:16 Vertical Artwork via Imagen 3
+# 4. Verify Credentials & Stop Early if Dry Run
+if DRY_RUN:
+    print("Validating GCP Service Account & YouTube OAuth Refresh Token...")
+    tts_client = texttospeech.TextToSpeechClient()
+    token_info = json.loads(os.environ["YOUTUBE_TOKEN_JSON"])
+    creds = Credentials.from_authorized_user_info(token_info)
+    if not creds.valid and creds.refresh_token:
+        creds.refresh(Request())
+    print("DRY RUN PASSED! Gemini 3.8 Flash, GCP credentials, and YouTube OAuth token are all valid ($0.00 cost).")
+    raise SystemExit(0)
+
+# 5. Generate 9:16 Vertical Artwork via Imagen 3
 print("Generating 9:16 artwork...")
 img_resp = client.models.generate_images(
     model="imagen-3.0-generate-002",
@@ -87,7 +104,7 @@ img_path = "frame.jpg"
 with open(img_path, "wb") as f:
     f.write(img_resp.generated_images[0].image.image_bytes)
 
-# 5. Generate Neural Voiceover via Google Cloud TTS
+# 6. Generate Neural Voiceover via Google Cloud TTS
 print("Synthesizing voiceover...")
 tts_client = texttospeech.TextToSpeechClient()
 synthesis_input = texttospeech.SynthesisInput(text=story_data["narration"])
@@ -106,7 +123,7 @@ audio_path = "voiceover.mp3"
 with open(audio_path, "wb") as f:
     f.write(tts_response.audio_content)
 
-# 6. Measure Audio Duration & Build Timed SRT Subtitles
+# 7. Measure Audio Duration & Build Timed SRT Subtitles
 probe = subprocess.check_output([
     "ffprobe", "-v", "error", "-show_entries", "format=duration",
     "-of", "default=noprint_wrappers=1:nokey=1", audio_path
@@ -132,7 +149,7 @@ with open(srt_path, "w", encoding="utf-8") as f:
         end_t = fmt_time(min(idx * time_per_chunk, duration))
         f.write(f"{idx}\n{start_t} --> {end_t}\n{chunk}\n\n")
 
-# 7. Render Vertical 1080x1920 MP4 with Ken Burns Slow Zoom + Burned Subtitles
+# 8. Render Vertical 1080x1920 MP4 with Ken Burns Slow Zoom + Burned Subtitles
 print("Rendering final Short with FFmpeg...")
 output_video = "final_short.mp4"
 total_frames = int(duration * 30) + 30
@@ -153,7 +170,7 @@ subprocess.run([
     output_video
 ], check=True)
 
-# 8. Upload Directly to YouTube Shorts
+# 9. Upload Directly to YouTube Shorts
 print("Uploading to YouTube...")
 token_info = json.loads(os.environ["YOUTUBE_TOKEN_JSON"])
 creds = Credentials.from_authorized_user_info(token_info)
@@ -180,7 +197,7 @@ response = request.execute()
 video_id = response["id"]
 print(f"PUBLISHED! https://youtube.com/shorts/{video_id}")
 
-# 9. Mark Topic as Published
+# 10. Mark Topic as Published
 current_item["status"] = "published"
 current_item["video_id"] = video_id
 with open("topics.json", "w", encoding="utf-8") as f:
