@@ -13,7 +13,7 @@ DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
 if DRY_RUN:
     print("=== DRY RUN MODE ENABLED (Skipping image gen, FFmpeg render, YouTube upload & topics.json update) ===")
 
-# Language configuration map (Neural2 voices)
+# Language configuration map (Neural2 / WaveNet voices)
 VOICE_MAP = {
     "Hindi": {
         "tts_code": "hi-IN",
@@ -68,7 +68,6 @@ current_item = pending[0]
 niche_name = current_item.get("niche", "Storytelling & Facts")
 topic_title = current_item["topic"]
 
-# Priority: GitHub workflow dropdown (if manually triggered) -> item's "language" in topics.json -> default "Hindi"
 env_lang = os.environ.get("TARGET_LANGUAGE", "").strip()
 selected_lang = env_lang if env_lang in VOICE_MAP else current_item.get("language", "Hindi")
 if selected_lang not in VOICE_MAP:
@@ -77,9 +76,9 @@ if selected_lang not in VOICE_MAP:
 lang_cfg = VOICE_MAP[selected_lang]
 print(f"Selected [{niche_name}] | Language: {selected_lang} | Topic: {topic_title}")
 
-# 3. Generate Niche-Adapted Script, Visual Direction, and Metadata
+# 3. Generate Niche-Adapted Script + 3 to 5 Chronological Scene Prompts
 script_prompt = f"""
-Create a gripping, high-retention 45-second YouTube Short script.
+Create a gripping, high-retention 45-second YouTube Short script with a 4-to-5-scene visual storyboard.
 Niche: "{niche_name}"
 Topic: "{topic_title}"
 Language Rule: {lang_cfg["script_instruction"]}
@@ -89,6 +88,7 @@ Guidelines:
 - Hook (0-5s): A bold opening question, surprising fact, or dramatic revelation.
 - Body (5-38s): Vivid, fast-paced storytelling with clear takeaways.
 - Closing CTA (38-45s): Memorable final thought and a natural prompt inviting viewers to comment.
+- Break the visual progression into 4 or 5 distinct chronological scenes (minimum 3, maximum 5) that match the exact flow of the narration from start to finish, keeping consistent character appearance and art style across all scenes.
 
 Return ONLY valid JSON with these exact keys:
 {{
@@ -96,7 +96,12 @@ Return ONLY valid JSON with these exact keys:
   "yt_description": "2-sentence engaging summary + 4 relevant hashtags including #Shorts",
   "yt_tags": ["tag1", "tag2", "tag3", "tag4", "Shorts"],
   "narration": "Clean spoken narration text ONLY (no stage directions, no brackets, ~105-115 words)",
-  "image_prompt": "Vertical 9:16 ultra-detailed cinematic illustration in English matching '{niche_name}' and '{topic_title}', dramatic lighting, rich composition, 8k digital art, strictly no text, letters, or watermarks"
+  "scene_prompts": [
+    "Scene 1 (Hook): Vertical 9:16 ultra-detailed cinematic illustration in English matching '{niche_name}', dramatic lighting, rich composition, 8k digital art, strictly no text, letters, or watermarks",
+    "Scene 2 (Setup): Vertical 9:16 ultra-detailed cinematic illustration in English continuing the story with consistent visual style, dramatic lighting, 8k digital art, strictly no text, letters, or watermarks",
+    "Scene 3 (Climax): Vertical 9:16 ultra-detailed cinematic illustration in English showing the peak dramatic moment, rich composition, 8k digital art, strictly no text, letters, or watermarks",
+    "Scene 4 (Resolution): Vertical 9:16 ultra-detailed cinematic illustration in English showing the powerful ending takeaway, warm atmospheric lighting, 8k digital art, strictly no text, letters, or watermarks"
+  ]
 }}
 """
 
@@ -106,7 +111,14 @@ story_resp = client.models.generate_content(
     config=types.GenerateContentConfig(response_mime_type="application/json"),
 )
 story_data = json.loads(story_resp.text)
+
+# Enforce minimum 3, maximum 5 scenes
+scene_prompts = story_data.get("scene_prompts", [])[:5]
+if len(scene_prompts) < 3:
+    raise RuntimeError(f"Expected at least 3 scene prompts, got {len(scene_prompts)}")
+
 print("Generated Title:", story_data["yt_title"])
+print(f"Planned {len(scene_prompts)} visual scenes.")
 print("Generated Narration:", story_data["narration"])
 
 # 4. Verify Credentials & Stop Early if Dry Run
@@ -117,30 +129,32 @@ if DRY_RUN:
     creds = Credentials.from_authorized_user_info(token_info)
     if not creds.valid and creds.refresh_token:
         creds.refresh(Request())
-    print(f"DRY RUN PASSED! Language={selected_lang}, Gemini 3.8 Flash, GCP credentials & YouTube token are valid ($0.00 cost).")
+    print(f"DRY RUN PASSED! Planned {len(scene_prompts)} scenes | Language={selected_lang} | All credentials valid ($0.00 cost).")
     raise SystemExit(0)
 
-# 5. Generate 9:16 Vertical Artwork via Gemini Native Image Generation
-print("Generating 9:16 artwork...")
-img_resp = client.models.generate_content(
-    model="gemini-2.5-flash-image",
-    contents=story_data["image_prompt"],
-    config=types.GenerateContentConfig(
-        response_modalities=["IMAGE"],
-        image_config=types.ImageConfig(aspect_ratio="9:16"),
-    ),
-)
-img_path = "frame.png"
-image_saved = False
-for part in img_resp.candidates[0].content.parts:
-    if part.inline_data is not None:
-        with open(img_path, "wb") as f:
-            f.write(part.inline_data.data)
-        image_saved = True
-        break
-
-if not image_saved:
-    raise RuntimeError("No image bytes were returned by gemini-2.5-flash-image.")
+# 5. Generate 3-5 Vertical 9:16 Scene Artworks via Gemini Native Image Generation
+scene_images = []
+for idx, prompt in enumerate(scene_prompts, start=1):
+    print(f"Generating 9:16 artwork for Scene {idx}/{len(scene_prompts)}...")
+    img_resp = client.models.generate_content(
+        model="gemini-2.5-flash-image",
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_modalities=["IMAGE"],
+            image_config=types.ImageConfig(aspect_ratio="9:16"),
+        ),
+    )
+    img_path = f"scene_{idx}.png"
+    saved = False
+    for part in img_resp.candidates[0].content.parts:
+        if part.inline_data is not None:
+            with open(img_path, "wb") as f:
+                f.write(part.inline_data.data)
+            saved = True
+            break
+    if not saved:
+        raise RuntimeError(f"No image bytes returned for Scene {idx}.")
+    scene_images.append(img_path)
 
 # 6. Generate Neural Voiceover via Google Cloud TTS
 print(f"Synthesizing {selected_lang} voiceover ({lang_cfg['voice_name']})...")
@@ -202,24 +216,57 @@ with open(ass_path, "w", encoding="utf-8") as f:
         end_t = fmt_ass_time(min(idx * time_per_chunk, duration))
         f.write(f"Dialogue: 0,{start_t},{end_t},Default,,0,0,0,,{chunk}\n")
 
-# 8. Render Vertical 1080x1920 MP4 with Ken Burns Slow Zoom + Burned Subtitles
-print("Rendering final Short with FFmpeg...")
-output_video = "final_short.mp4"
-total_frames = int(duration * 30) + 30
-vf_filter = (
-    f"scale=2160:3840,"
-    f"zoompan=z='min(zoom+0.0005,1.15)':d={total_frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30,"
-    f"ass={ass_path}"
-)
+# 8. Render Individual Ken Burns Scene Clips & Stitch With Subtitles + Audio
+print(f"Rendering {len(scene_images)} animated scenes with FFmpeg...")
+total_video_duration = duration + 0.5
+scene_duration = total_video_duration / len(scene_images)
+scene_frames = int(scene_duration * 30) + 5
 
+clip_files = []
+for idx, img_path in enumerate(scene_images, start=1):
+    clip_path = f"clip_{idx}.mp4"
+    # Alternate subtle zoom-in and zoom-out across scenes for dynamic pacing
+    if idx % 2 == 1:
+        zoom_expr = "min(zoom+0.0008,1.15)"
+    else:
+        zoom_expr = "max(1.15-0.0008*on,1.0)"
+
+    scene_vf = (
+        f"scale=2160:3840,"
+        f"zoompan=z='{zoom_expr}':d={scene_frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30"
+    )
+    subprocess.run([
+        "ffmpeg", "-y",
+        "-loop", "1", "-i", img_path,
+        "-vf", scene_vf,
+        "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
+        "-t", f"{scene_duration:.3f}",
+        clip_path
+    ], check=True)
+    clip_files.append(clip_path)
+
+concat_list = "clips.txt"
+with open(concat_list, "w", encoding="utf-8") as f:
+    for clip in clip_files:
+        f.write(f"file '{clip}'\n")
+
+stitched_video = "stitched.mp4"
 subprocess.run([
     "ffmpeg", "-y",
-    "-loop", "1", "-i", img_path,
+    "-f", "concat", "-safe", "0", "-i", concat_list,
+    "-c", "copy",
+    stitched_video
+], check=True)
+
+output_video = "final_short.mp4"
+subprocess.run([
+    "ffmpeg", "-y",
+    "-i", stitched_video,
     "-i", audio_path,
-    "-vf", vf_filter,
+    "-vf", f"ass={ass_path}",
     "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
     "-c:a", "aac", "-b:a", "192k",
-    "-t", str(duration + 0.5),
+    "-shortest",
     output_video
 ], check=True)
 
@@ -253,6 +300,7 @@ print(f"PUBLISHED! https://youtube.com/shorts/{video_id}")
 # 10. Mark Topic as Published
 current_item["status"] = "published"
 current_item["language"] = selected_lang
+current_item["scenes_generated"] = len(scene_images)
 current_item["video_id"] = video_id
 with open("topics.json", "w", encoding="utf-8") as f:
     json.dump(topics, f, indent=2, ensure_ascii=False)
