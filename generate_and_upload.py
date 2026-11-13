@@ -13,6 +13,28 @@ DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
 if DRY_RUN:
     print("=== DRY RUN MODE ENABLED (Skipping image gen, FFmpeg render, YouTube upload & topics.json update) ===")
 
+# Language configuration map (Neural2 voices)
+VOICE_MAP = {
+    "Hindi": {
+        "tts_code": "hi-IN",
+        "voice_name": "hi-IN-Neural2-B",
+        "font": "Noto Sans Devanagari",
+        "script_instruction": "Write the narration, yt_title, and yt_description in natural, engaging spoken Hindi (Devanagari script), keeping #Shorts in English."
+    },
+    "English": {
+        "tts_code": "en-IN",
+        "voice_name": "en-IN-Neural2-D",
+        "font": "Noto Sans",
+        "script_instruction": "Write the narration, yt_title, and yt_description in natural, gripping Indian English."
+    },
+    "Bengali": {
+        "tts_code": "bn-IN",
+        "voice_name": "bn-IN-Wavenet-B",
+        "font": "Noto Sans Bengali",
+        "script_instruction": "Write the narration, yt_title, and yt_description in natural, engaging spoken Bengali (Bengali script), keeping #Shorts in English."
+    }
+}
+
 # 1. Initialize Gemini Client
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
@@ -45,13 +67,22 @@ if not pending:
 current_item = pending[0]
 niche_name = current_item.get("niche", "Storytelling & Facts")
 topic_title = current_item["topic"]
-print(f"Selected [{niche_name}]: {topic_title}")
+
+# Priority: GitHub workflow dropdown (if manually triggered) -> item's "language" in topics.json -> default "Hindi"
+env_lang = os.environ.get("TARGET_LANGUAGE", "").strip()
+selected_lang = env_lang if env_lang in VOICE_MAP else current_item.get("language", "Hindi")
+if selected_lang not in VOICE_MAP:
+    selected_lang = "Hindi"
+
+lang_cfg = VOICE_MAP[selected_lang]
+print(f"Selected [{niche_name}] | Language: {selected_lang} | Topic: {topic_title}")
 
 # 3. Generate Niche-Adapted Script, Visual Direction, and Metadata
 script_prompt = f"""
 Create a gripping, high-retention 45-second YouTube Short script.
 Niche: "{niche_name}"
 Topic: "{topic_title}"
+Language Rule: {lang_cfg["script_instruction"]}
 
 Guidelines:
 - Match the tone, vocabulary, and emotional energy to the "{niche_name}" niche.
@@ -65,7 +96,7 @@ Return ONLY valid JSON with these exact keys:
   "yt_description": "2-sentence engaging summary + 4 relevant hashtags including #Shorts",
   "yt_tags": ["tag1", "tag2", "tag3", "tag4", "Shorts"],
   "narration": "Clean spoken narration text ONLY (no stage directions, no brackets, ~105-115 words)",
-  "image_prompt": "Vertical 9:16 ultra-detailed cinematic illustration matching '{niche_name}' and '{topic_title}', dramatic lighting, rich composition, 8k digital art, strictly no text, letters, or watermarks"
+  "image_prompt": "Vertical 9:16 ultra-detailed cinematic illustration in English matching '{niche_name}' and '{topic_title}', dramatic lighting, rich composition, 8k digital art, strictly no text, letters, or watermarks"
 }}
 """
 
@@ -86,7 +117,7 @@ if DRY_RUN:
     creds = Credentials.from_authorized_user_info(token_info)
     if not creds.valid and creds.refresh_token:
         creds.refresh(Request())
-    print("DRY RUN PASSED! Gemini 3.8 Flash, GCP credentials, and YouTube OAuth token are all valid ($0.00 cost).")
+    print(f"DRY RUN PASSED! Language={selected_lang}, Gemini 3.8 Flash, GCP credentials & YouTube token are valid ($0.00 cost).")
     raise SystemExit(0)
 
 # 5. Generate 9:16 Vertical Artwork via Gemini Native Image Generation
@@ -112,12 +143,12 @@ if not image_saved:
     raise RuntimeError("No image bytes were returned by gemini-2.5-flash-image.")
 
 # 6. Generate Neural Voiceover via Google Cloud TTS
-print("Synthesizing voiceover...")
+print(f"Synthesizing {selected_lang} voiceover ({lang_cfg['voice_name']})...")
 tts_client = texttospeech.TextToSpeechClient()
 synthesis_input = texttospeech.SynthesisInput(text=story_data["narration"])
 voice = texttospeech.VoiceSelectionParams(
-    language_code="en-IN",
-    name="en-IN-Neural2-D",
+    language_code=lang_cfg["tts_code"],
+    name=lang_cfg["voice_name"],
 )
 audio_config = texttospeech.AudioConfig(
     audio_encoding=texttospeech.AudioEncoding.MP3,
@@ -130,7 +161,7 @@ audio_path = "voiceover.mp3"
 with open(audio_path, "wb") as f:
     f.write(tts_response.audio_content)
 
-# 7. Measure Audio Duration & Build Timed SRT Subtitles
+# 7. Measure Audio Duration & Build Timed ASS Subtitles (Exact 1080x1920 Safe Zone)
 probe = subprocess.check_output([
     "ffprobe", "-v", "error", "-show_entries", "format=duration",
     "-of", "default=noprint_wrappers=1:nokey=1", audio_path
@@ -138,23 +169,38 @@ probe = subprocess.check_output([
 duration = float(probe)
 
 words = story_data["narration"].split()
-chunk_size = 5
+chunk_size = 4
 chunks = [" ".join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size)]
 time_per_chunk = duration / max(len(chunks), 1)
 
-def fmt_time(sec):
+def fmt_ass_time(sec):
     h = int(sec // 3600)
     m = int((sec % 3600) // 60)
     s = int(sec % 60)
-    ms = int((sec - int(sec)) * 1000)
-    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+    cs = int((sec - int(sec)) * 100)
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
-srt_path = "subtitles.srt"
-with open(srt_path, "w", encoding="utf-8") as f:
+ass_path = "subtitles.ass"
+ass_header = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 2
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,{lang_cfg['font']},54,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,2,2,70,70,360,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+
+with open(ass_path, "w", encoding="utf-8") as f:
+    f.write(ass_header)
     for idx, chunk in enumerate(chunks, start=1):
-        start_t = fmt_time((idx - 1) * time_per_chunk)
-        end_t = fmt_time(min(idx * time_per_chunk, duration))
-        f.write(f"{idx}\n{start_t} --> {end_t}\n{chunk}\n\n")
+        start_t = fmt_ass_time((idx - 1) * time_per_chunk)
+        end_t = fmt_ass_time(min(idx * time_per_chunk, duration))
+        f.write(f"Dialogue: 0,{start_t},{end_t},Default,,0,0,0,,{chunk}\n")
 
 # 8. Render Vertical 1080x1920 MP4 with Ken Burns Slow Zoom + Burned Subtitles
 print("Rendering final Short with FFmpeg...")
@@ -163,7 +209,7 @@ total_frames = int(duration * 30) + 30
 vf_filter = (
     f"scale=2160:3840,"
     f"zoompan=z='min(zoom+0.0005,1.15)':d={total_frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30,"
-    f"subtitles={srt_path}:force_style='Alignment=2,MarginV=260,FontName=DejaVu Sans,FontSize=15,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2'"
+    f"ass={ass_path}"
 )
 
 subprocess.run([
@@ -206,6 +252,7 @@ print(f"PUBLISHED! https://youtube.com/shorts/{video_id}")
 
 # 10. Mark Topic as Published
 current_item["status"] = "published"
+current_item["language"] = selected_lang
 current_item["video_id"] = video_id
 with open("topics.json", "w", encoding="utf-8") as f:
     json.dump(topics, f, indent=2, ensure_ascii=False)
