@@ -1,21 +1,25 @@
 import os
 import json
 import subprocess
+from datetime import datetime, timezone, timedelta
+import gspread
 from google import genai
 from google.genai import types
 from google.cloud import texttospeech
 from google.oauth2.credentials import Credentials
+from google.oauth2 import service_account
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
 VIDEO_IDEA = os.environ.get("VIDEO_IDEA", "").strip()
-VIDEO_COUNT = max(1, min(int(os.environ.get("VIDEO_COUNT", "1")), 5))
+VIDEO_COUNT = max(1, min(int(os.environ.get("VIDEO_COUNT", "3")), 5))
 TARGET_CHANNEL = os.environ.get("TARGET_CHANNEL", "Auto-Detect from Idea").strip()
+GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "").strip()
 
 if DRY_RUN:
-    print("=== DRY RUN MODE ENABLED (Skipping image gen, FFmpeg render, YouTube upload & topics.json update) ===")
+    print("=== DRY RUN MODE ENABLED (Skipping image gen, FFmpeg render, YouTube upload & Sheet tick) ===")
 
 CHANNEL_CONFIG = {
     "Bhakti Marg": {
@@ -40,6 +44,8 @@ CHANNEL_CONFIG = {
     }
 }
 
+SHEET_TABS = ["Bhakti Marg", "Biography of Hindu Saints", "The Lean Bites"]
+
 VOICE_MAP = {
     "Hindi": {
         "tts_code": "hi-IN",
@@ -63,13 +69,23 @@ VOICE_MAP = {
 
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
+def get_sheets_client():
+    if not GOOGLE_SHEET_ID:
+        return None
+    sa_creds = service_account.Credentials.from_service_account_file(
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"],
+        scopes=["https://www.googleapis.com/auth/spreadsheets"]
+    )
+    gc = gspread.authorize(sa_creds)
+    return gc.open_by_key(GOOGLE_SHEET_ID)
+
 def resolve_channel(idea_text):
     if TARGET_CHANNEL in CHANNEL_CONFIG:
         return TARGET_CHANNEL
     route_prompt = f"""
     Classify this video idea into the SINGLE best matching YouTube channel from these 4 options:
     1. "Bhakti Marg" -> Hindu spirituality, gods/goddesses, temples, rituals, Puranic stories.
-    2. "Biography of Hindu Saints" -> Biographies, life stories, and teachings of specific saints, sages, or gurus (e.g., Bamakhepa, Neem Karoli Baba, Ramakrishna, Vivekananda, Adi Shankaracharya).
+    2. "Biography of Hindu Saints" -> Biographies, life stories, and teachings of specific saints, sages, or gurus.
     3. "The Lean Bites" -> High-protein diet, vegetarian/egg protein meals, nutrition, fitness food, healthy recipes.
     4. "I am Abhinanden" -> Anything else (tech, general facts, personal tests, miscellaneous).
 
@@ -89,8 +105,6 @@ def get_youtube_client(channel_name):
     raw_token = os.environ.get(secret_env, "").strip()
     if not raw_token:
         raise RuntimeError(f"Missing GitHub secret '{secret_env}' required for channel '{channel_name}'.")
-
-    # Supports both full JSON object AND plain "1//0..." refresh token string
     if raw_token.startswith("{"):
         token_info = json.loads(raw_token)
     else:
@@ -103,31 +117,25 @@ def get_youtube_client(channel_name):
             "client_secret": base_info["client_secret"],
             "scopes": ["https://www.googleapis.com/auth/youtube.upload"]
         }
-
     creds = Credentials.from_authorized_user_info(token_info)
     if not creds.valid and creds.refresh_token:
         creds.refresh(Request())
     return build("youtube", "v3", credentials=creds)
 
-with open("topics.json", "r", encoding="utf-8") as f:
-    topics = json.load(f)
-
 env_lang = os.environ.get("TARGET_LANGUAGE", "Hindi").strip()
 selected_lang = env_lang if env_lang in VOICE_MAP else "Hindi"
+spreadsheet = get_sheets_client()
 
 batch_items = []
 if VIDEO_IDEA:
     routed_channel = resolve_channel(VIDEO_IDEA)
-    print(f"Idea '{VIDEO_IDEA}' routed to channel: [{routed_channel}] | Count: {VIDEO_COUNT}")
+    print(f"Manual Idea '{VIDEO_IDEA}' routed to [{routed_channel}] | Count: {VIDEO_COUNT}")
     if VIDEO_COUNT == 1:
-        item = {"channel": routed_channel, "niche": VIDEO_IDEA, "topic": VIDEO_IDEA, "language": selected_lang, "status": "pending"}
-        topics.append(item)
-        batch_items.append(item)
+        batch_items.append({"channel": routed_channel, "series": "", "topic": VIDEO_IDEA, "language": selected_lang, "sheet_ws": None, "row_num": None})
     else:
         split_prompt = (
-            f"Break this broad video idea for the YouTube channel '{routed_channel}' "
-            f"({CHANNEL_CONFIG[routed_channel]['niche_desc']}) into {VIDEO_COUNT} distinct, "
-            f"non-overlapping, high-retention YouTube Shorts topics: '{VIDEO_IDEA}'. "
+            f"Break this broad video idea for '{routed_channel}' ({CHANNEL_CONFIG[routed_channel]['niche_desc']}) "
+            f"into {VIDEO_COUNT} distinct, non-overlapping YouTube Shorts topics: '{VIDEO_IDEA}'. "
             "Return ONLY a JSON array of strings."
         )
         split_resp = client.models.generate_content(
@@ -136,40 +144,45 @@ if VIDEO_IDEA:
             config=types.GenerateContentConfig(response_mime_type="application/json"),
         )
         for sub in json.loads(split_resp.text)[:VIDEO_COUNT]:
-            item = {"channel": routed_channel, "niche": VIDEO_IDEA, "topic": sub, "language": selected_lang, "status": "pending"}
-            topics.append(item)
-            batch_items.append(item)
-else:
-    pending = [t for t in topics if t.get("status") == "pending"]
-    if not pending:
-        fallback_channel = TARGET_CHANNEL if TARGET_CHANNEL in CHANNEL_CONFIG else "Bhakti Marg"
-        niche_desc = CHANNEL_CONFIG[fallback_channel]["niche_desc"]
-        print(f"Queue empty — generating {VIDEO_COUNT} fresh topics for [{fallback_channel}]...")
-        existing_titles = [t["topic"] for t in topics]
-        refill_prompt = (
-            f"Generate {VIDEO_COUNT} unique, high-retention YouTube Shorts topics for '{fallback_channel}' "
-            f"({niche_desc}) that are NOT in this list: {json.dumps(existing_titles)}. "
-            "Return ONLY a JSON array of strings."
-        )
-        refill_resp = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=refill_prompt,
-            config=types.GenerateContentConfig(response_mime_type="application/json"),
-        )
-        new_topics = [
-            {"channel": fallback_channel, "niche": niche_desc, "topic": title, "language": selected_lang, "status": "pending"}
-            for title in json.loads(refill_resp.text)[:VIDEO_COUNT]
-        ]
-        topics.extend(new_topics)
-        pending = new_topics
-    batch_items = pending[:VIDEO_COUNT]
+            batch_items.append({"channel": routed_channel, "series": VIDEO_IDEA, "topic": sub, "language": selected_lang, "sheet_ws": None, "row_num": None})
+elif spreadsheet:
+    tabs_to_scan = [TARGET_CHANNEL] if TARGET_CHANNEL in SHEET_TABS else SHEET_TABS
+    per_tab_queues = {}
+    for tab_name in tabs_to_scan:
+        ws = spreadsheet.worksheet(tab_name)
+        rows = ws.get_all_values()
+        unchecked = []
+        for row_idx, row in enumerate(rows[1:], start=2):
+            published_val = row[0].strip().upper() if len(row) > 0 else ""
+            series_val = row[1].strip() if len(row) > 1 else ""
+            episode_val = row[2].strip() if len(row) > 2 else ""
+            lang_val = row[3].strip() if len(row) > 3 and row[3].strip() in VOICE_MAP else selected_lang
+            if episode_val and published_val != "TRUE":
+                unchecked.append({
+                    "channel": tab_name,
+                    "series": series_val,
+                    "topic": f"{series_val} - {episode_val}" if series_val else episode_val,
+                    "language": lang_val,
+                    "sheet_ws": ws,
+                    "row_num": row_idx
+                })
+        per_tab_queues[tab_name] = unchecked
 
-# Validate GCP TTS and all target YouTube channel tokens upfront
+    while len(batch_items) < VIDEO_COUNT and any(per_tab_queues.values()):
+        for tab_name in tabs_to_scan:
+            if per_tab_queues[tab_name] and len(batch_items) < VIDEO_COUNT:
+                batch_items.append(per_tab_queues[tab_name].pop(0))
+
+    if not batch_items:
+        print("All episodes in the Google Sheet are already ticked (TRUE)! Add new rows to continue.")
+        raise SystemExit(0)
+else:
+    raise RuntimeError("No VIDEO_IDEA provided and GOOGLE_SHEET_ID secret is not configured.")
+
 tts_client = texttospeech.TextToSpeechClient()
 yt_clients = {}
 for item in batch_items:
-    ch = item.get("channel") or resolve_channel(item["topic"])
-    item["channel"] = ch
+    ch = item["channel"]
     if ch not in yt_clients:
         print(f"Validating YouTube OAuth token for channel: [{ch}]...")
         yt_clients[ch] = get_youtube_client(ch)
@@ -181,23 +194,34 @@ def fmt_ass_time(sec):
     cs = int((sec - int(sec)) * 100)
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
+ist_tz = timezone(timedelta(hours=5, minutes=30))
+today_ist = datetime.now(ist_tz).strftime("%Y-%m-%d")
+
 for batch_idx, current_item in enumerate(batch_items, start=1):
     ch_name = current_item["channel"]
     ch_cfg = CHANNEL_CONFIG[ch_name]
+    series_name = current_item["series"]
     topic_title = current_item["topic"]
-    item_lang = env_lang if env_lang in VOICE_MAP else current_item.get("language", "Hindi")
+    item_lang = current_item["language"]
     item_cfg = VOICE_MAP.get(item_lang, VOICE_MAP["Hindi"])
 
-    print(f"\n--- [{batch_idx}/{len(batch_items)}] Channel: {ch_name} | Lang: {item_lang} | Topic: {topic_title} ---")
+    print(f"\n--- [{batch_idx}/{len(batch_items)}] Channel: {ch_name} | Lang: {item_lang} | Episode: {topic_title} ---")
+
+    series_rule = (
+        f'- Series Continuity: This video is an episode in the series "{series_name}". '
+        f'Reference the series naturally in the hook and end with a crisp cliffhanger inviting viewers to follow for the next part.'
+        if series_name else ""
+    )
 
     script_prompt = f"""
     Create a gripping, high-retention 45-second YouTube Short script with a 4-to-5-scene visual storyboard.
     Target Channel: "{ch_name}" ({ch_cfg['niche_desc']})
     Visual & Tone Style: {ch_cfg['style_guide']}
-    Specific Topic: "{topic_title}"
+    Episode Topic: "{topic_title}"
     Language Rule: {item_cfg["script_instruction"]}
 
     Guidelines:
+    {series_rule}
     - Hook (0-5s): A bold opening question, surprising fact, or dramatic revelation.
     - Body (5-38s): Vivid, fast-paced storytelling with clear, authentic takeaways.
     - Closing CTA (38-45s): Memorable final thought and a natural prompt inviting viewers to comment.
@@ -372,16 +396,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     request = yt_clients[ch_name].videos().insert(part="snippet,status", body=body, media_body=media)
     response = request.execute()
     video_id = response["id"]
-    print(f"  UNLISTED UPLOAD READY on [{ch_name}]! https://youtube.com/shorts/{video_id}")
+    short_url = f"https://youtube.com/shorts/{video_id}"
+    print(f"  UNLISTED UPLOAD READY on [{ch_name}]! {short_url}")
 
-    current_item["status"] = "published"
-    current_item["language"] = item_lang
-    current_item["scenes_generated"] = len(scene_images)
-    current_item["video_id"] = video_id
+    if current_item["sheet_ws"] and current_item["row_num"]:
+        ws = current_item["sheet_ws"]
+        r = current_item["row_num"]
+        ws.update(f"A{r}", [[True]], value_input_option="USER_ENTERED")
+        ws.update(f"E{r}:F{r}", [[short_url, today_ist]], value_input_option="USER_ENTERED")
+        print(f"  Ticked checkbox in Google Sheet tab '{ch_name}' Row {r}!")
 
 if DRY_RUN:
-    print("\nDRY RUN PASSED! All target channel tokens validated at $0.00 cost.")
+    print(f"\nDRY RUN PASSED! Queued {len(batch_items)} episode(s) from Google Sheet ($0.00 cost).")
     raise SystemExit(0)
-
-with open("topics.json", "w", encoding="utf-8") as f:
-    json.dump(topics, f, indent=2, ensure_ascii=False)
