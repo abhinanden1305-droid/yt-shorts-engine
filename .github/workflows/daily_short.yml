@@ -2,7 +2,8 @@ name: Daily YouTube Short
 
 on:
   schedule:
-    - cron: '30 12 * * *'
+    - cron: '30 0 * * *'   # 6:00 AM IST (1 Short per channel = 3 Shorts)
+    - cron: '30 12 * * *'  # 6:00 PM IST (1 Short per channel = 3 Shorts)
   workflow_dispatch:
     inputs:
       channel:
