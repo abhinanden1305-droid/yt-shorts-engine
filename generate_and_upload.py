@@ -89,7 +89,21 @@ def get_youtube_client(channel_name):
     raw_token = os.environ.get(secret_env, "").strip()
     if not raw_token:
         raise RuntimeError(f"Missing GitHub secret '{secret_env}' required for channel '{channel_name}'.")
-    token_info = json.loads(raw_token)
+
+    # Supports both full JSON object AND plain "1//0..." refresh token string
+    if raw_token.startswith("{"):
+        token_info = json.loads(raw_token)
+    else:
+        base_info = json.loads(os.environ["YOUTUBE_TOKEN_JSON"])
+        token_info = {
+            "token": "",
+            "refresh_token": raw_token,
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "client_id": base_info["client_id"],
+            "client_secret": base_info["client_secret"],
+            "scopes": ["https://www.googleapis.com/auth/youtube.upload"]
+        }
+
     creds = Credentials.from_authorized_user_info(token_info)
     if not creds.valid and creds.refresh_token:
         creds.refresh(Request())
