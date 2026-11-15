@@ -2,6 +2,7 @@ import os
 import json
 import subprocess
 from datetime import datetime, timezone, timedelta
+from PIL import Image
 import gspread
 from google import genai
 from google.genai import types
@@ -17,6 +18,7 @@ VIDEO_IDEA = os.environ.get("VIDEO_IDEA", "").strip()
 VIDEO_COUNT = max(1, min(int(os.environ.get("VIDEO_COUNT", "3")), 5))
 TARGET_CHANNEL = os.environ.get("TARGET_CHANNEL", "Auto-Detect from Idea").strip()
 GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "").strip()
+CHARACTER_REF_PATH = "character.png"
 
 if DRY_RUN:
     print("=== DRY RUN MODE ENABLED (Skipping image gen, FFmpeg render, YouTube upload & Sheet tick) ===")
@@ -25,22 +27,26 @@ CHANNEL_CONFIG = {
     "Bhakti Marg": {
         "env_secret": "YT_TOKEN_BHAKTI_MARG",
         "niche_desc": "Hindu spirituality, sacred temples, deities, mantras, and devotional mythology",
-        "style_guide": "Reverent, mystical, devotional storytelling with sacred temple lighting and divine cosmic aesthetics."
+        "style_guide": "Reverent, mystical, devotional storytelling with sacred temple lighting and divine cosmic aesthetics.",
+        "character_style": "wearing traditional saffron and cream silk devotional kurta with subtle tilak and rudraksha beads, standing in a warm diya-lit ancient Hindu temple courtyard"
     },
     "Biography of Hindu Saints": {
         "env_secret": "YT_TOKEN_HINDU_SAINTS",
         "niche_desc": "Life stories, miracles, teachings, and spiritual journeys of Hindu saints, yogis, and gurus",
-        "style_guide": "Biographical, inspiring, historically grounded storytelling highlighting the saint's life, ashram, and core spiritual message."
+        "style_guide": "Biographical, inspiring, historically grounded storytelling highlighting the saint's life, ashram, and core spiritual message.",
+        "character_style": "wearing a serene off-white khadi linen kurta with a warm, wise storyteller expression, seated in a peaceful Himalayan ashram library at golden hour"
     },
     "The Lean Bites": {
         "env_secret": "YT_TOKEN_LEAN_BITES",
         "niche_desc": "High-protein vegetarian and egg-inclusive diets, muscle-building nutrition, healthy low-glycemic recipes, and fat-loss science",
-        "style_guide": "Crisp, practical, science-backed nutrition storytelling with appetizing macro-friendly food photography and clean vibrant visuals."
+        "style_guide": "Crisp, practical, science-backed nutrition storytelling with appetizing macro-friendly food photography and clean vibrant visuals.",
+        "character_style": "wearing a crisp modern fitted dark-olive athletic t-shirt with an energetic, trustworthy nutrition coach demeanor, standing in a bright modern kitchen with fresh high-protein ingredients"
     },
     "I am Abhinanden": {
         "env_secret": "YOUTUBE_TOKEN_JSON",
         "niche_desc": "General stories, personal insights, experiments, and miscellaneous educational topics",
-        "style_guide": "Engaging, clear, modern storytelling with high-contrast cinematic visuals."
+        "style_guide": "Engaging, clear, modern storytelling with high-contrast cinematic visuals.",
+        "character_style": "wearing smart-casual modern jacket in a sleek, warmly lit studio background"
     }
 }
 
@@ -51,23 +57,26 @@ VOICE_MAP = {
         "tts_code": "hi-IN",
         "voice_name": "hi-IN-Neural2-B",
         "font": "Noto Sans Devanagari",
-        "script_instruction": "Write the narration, yt_title, and yt_description in natural, engaging spoken Hindi (Devanagari script), keeping #Shorts in English."
+        "script_instruction": "Write in natural, engaging spoken Hindi (Devanagari script), keeping #Shorts in English."
     },
     "English": {
         "tts_code": "en-IN",
         "voice_name": "en-IN-Neural2-D",
         "font": "Noto Sans",
-        "script_instruction": "Write the narration, yt_title, and yt_description in natural, gripping Indian English."
+        "script_instruction": "Write in natural, gripping Indian English."
     },
     "Bengali": {
         "tts_code": "bn-IN",
         "voice_name": "bn-IN-Wavenet-B",
         "font": "Noto Sans Bengali",
-        "script_instruction": "Write the narration, yt_title, and yt_description in natural, engaging spoken Bengali (Bengali script), keeping #Shorts in English."
+        "script_instruction": "Write in natural, engaging spoken Bengali (Bengali script), keeping #Shorts in English."
     }
 }
 
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+character_ref_img = Image.open(CHARACTER_REF_PATH) if os.path.exists(CHARACTER_REF_PATH) else None
+if character_ref_img:
+    print(f"Loaded character reference image: {CHARACTER_REF_PATH}")
 
 def get_sheets_client():
     if not GOOGLE_SHEET_ID:
@@ -118,7 +127,7 @@ def get_youtube_client(channel_name):
             "scopes": ["https://www.googleapis.com/auth/youtube.upload"]
         }
     creds = Credentials.from_authorized_user_info(token_info)
-    if not creds.valid and creds.refresh_token:
+    if creds.valid is False and creds.refresh_token:
         creds.refresh(Request())
     return build("youtube", "v3", credentials=creds)
 
@@ -131,7 +140,7 @@ if VIDEO_IDEA:
     routed_channel = resolve_channel(VIDEO_IDEA)
     print(f"Manual Idea '{VIDEO_IDEA}' routed to [{routed_channel}] | Count: {VIDEO_COUNT}")
     if VIDEO_COUNT == 1:
-        batch_items.append({"channel": routed_channel, "series": "", "topic": VIDEO_IDEA, "language": selected_lang, "sheet_ws": None, "row_num": None})
+        batch_items.append({"channel": routed_channel, "series": "", "topic": VIDEO_IDEA, "language": selected_lang, "custom_script": "", "sheet_ws": None, "row_num": None})
     else:
         split_prompt = (
             f"Break this broad video idea for '{routed_channel}' ({CHANNEL_CONFIG[routed_channel]['niche_desc']}) "
@@ -144,7 +153,7 @@ if VIDEO_IDEA:
             config=types.GenerateContentConfig(response_mime_type="application/json"),
         )
         for sub in json.loads(split_resp.text)[:VIDEO_COUNT]:
-            batch_items.append({"channel": routed_channel, "series": VIDEO_IDEA, "topic": sub, "language": selected_lang, "sheet_ws": None, "row_num": None})
+            batch_items.append({"channel": routed_channel, "series": VIDEO_IDEA, "topic": sub, "language": selected_lang, "custom_script": "", "sheet_ws": None, "row_num": None})
 elif spreadsheet:
     tabs_to_scan = [TARGET_CHANNEL] if TARGET_CHANNEL in SHEET_TABS else SHEET_TABS
     per_tab_queues = {}
@@ -157,12 +166,14 @@ elif spreadsheet:
             series_val = row[1].strip() if len(row) > 1 else ""
             episode_val = row[2].strip() if len(row) > 2 else ""
             lang_val = row[3].strip() if len(row) > 3 and row[3].strip() in VOICE_MAP else selected_lang
+            custom_script_val = row[6].strip() if len(row) > 6 else ""
             if episode_val and published_val != "TRUE":
                 unchecked.append({
                     "channel": tab_name,
                     "series": series_val,
                     "topic": f"{series_val} - {episode_val}" if series_val else episode_val,
                     "language": lang_val,
+                    "custom_script": custom_script_val,
                     "sheet_ws": ws,
                     "row_num": row_idx
                 })
@@ -203,44 +214,70 @@ for batch_idx, current_item in enumerate(batch_items, start=1):
     series_name = current_item["series"]
     topic_title = current_item["topic"]
     item_lang = current_item["language"]
+    custom_script = current_item["custom_script"]
     item_cfg = VOICE_MAP.get(item_lang, VOICE_MAP["Hindi"])
 
     print(f"\n--- [{batch_idx}/{len(batch_items)}] Channel: {ch_name} | Lang: {item_lang} | Episode: {topic_title} ---")
 
-    series_rule = (
-        f'- Series Continuity: This video is an episode in the series "{series_name}". '
-        f'Reference the series naturally in the hook and end with a crisp cliffhanger inviting viewers to follow for the next part.'
-        if series_name else ""
-    )
+    if custom_script:
+        print("Using your Custom Script from Column G!")
+        script_prompt = f"""
+        You are given a pre-written spoken narration script for a YouTube Short.
+        Target Channel: "{ch_name}" ({ch_cfg['niche_desc']})
+        Visual & Tone Style: {ch_cfg['style_guide']}
+        Episode Topic: "{topic_title}"
+        Pre-written Narration: "{custom_script}"
+        Metadata Language Rule: {item_cfg["script_instruction"]}
 
-    script_prompt = f"""
-    Create a gripping, high-retention 45-second YouTube Short script with a 4-to-5-scene visual storyboard.
-    Target Channel: "{ch_name}" ({ch_cfg['niche_desc']})
-    Visual & Tone Style: {ch_cfg['style_guide']}
-    Episode Topic: "{topic_title}"
-    Language Rule: {item_cfg["script_instruction"]}
+        Create YouTube metadata (yt_title, yt_description, yt_tags) and 4 chronological visual scene prompts matching the exact flow of the Pre-written Narration above.
 
-    Guidelines:
-    {series_rule}
-    - Hook (0-5s): A bold opening question, surprising fact, or dramatic revelation.
-    - Body (5-38s): Vivid, fast-paced storytelling with clear, authentic takeaways.
-    - Closing CTA (38-45s): Memorable final thought and a natural prompt inviting viewers to comment.
-    - Break the visual progression into 4 or 5 distinct chronological scenes (minimum 3, maximum 5) matching the narration flow, keeping consistent style across all scenes.
+        Return ONLY valid JSON with these exact keys:
+        {{
+          "yt_title": "Catchy title under 70 chars including #Shorts and 1 niche hashtag",
+          "yt_description": "2-sentence engaging summary + 4 relevant hashtags including #Shorts",
+          "yt_tags": ["tag1", "tag2", "tag3", "tag4", "Shorts"],
+          "scene_prompts": [
+            "Scene 1 (Hook): Vertical 9:16 ultra-detailed cinematic visual in English matching the opening hook, {ch_cfg['style_guide']}, 8k quality, strictly no text, letters, or watermarks",
+            "Scene 2 (Setup): Vertical 9:16 ultra-detailed cinematic visual in English matching the second part of the narration with consistent style, 8k quality, strictly no text, letters, or watermarks",
+            "Scene 3 (Climax): Vertical 9:16 ultra-detailed cinematic visual in English matching the climax of the narration, 8k quality, strictly no text, letters, or watermarks",
+            "Scene 4 (Resolution): Vertical 9:16 ultra-detailed cinematic visual in English matching the ending takeaway, {ch_cfg['style_guide']}, 8k quality, strictly no text, letters, or watermarks"
+          ]
+        }}
+        """
+    else:
+        series_rule = (
+            f'- Series Continuity: This video is an episode in the series "{series_name}". '
+            f'Reference the series naturally in the hook and end with a crisp cliffhanger inviting viewers to follow for the next part.'
+            if series_name else ""
+        )
+        script_prompt = f"""
+        Create a gripping, high-retention 45-second YouTube Short script with a 4-scene visual storyboard.
+        Target Channel: "{ch_name}" ({ch_cfg['niche_desc']})
+        Visual & Tone Style: {ch_cfg['style_guide']}
+        Episode Topic: "{topic_title}"
+        Language Rule: Write the narration, yt_title, and yt_description — {item_cfg["script_instruction"]}
 
-    Return ONLY valid JSON with these exact keys:
-    {{
-      "yt_title": "Catchy title under 70 chars including #Shorts and 1 niche hashtag",
-      "yt_description": "2-sentence engaging summary + 4 relevant hashtags including #Shorts",
-      "yt_tags": ["tag1", "tag2", "tag3", "tag4", "Shorts"],
-      "narration": "Clean spoken narration text ONLY (no stage directions, no brackets, ~105-115 words)",
-      "scene_prompts": [
-        "Scene 1 (Hook): Vertical 9:16 ultra-detailed cinematic visual in English matching '{topic_title}', {ch_cfg['style_guide']}, 8k quality, strictly no text, letters, or watermarks",
-        "Scene 2 (Setup): Vertical 9:16 ultra-detailed cinematic visual in English continuing the story with consistent style, 8k quality, strictly no text, letters, or watermarks",
-        "Scene 3 (Climax): Vertical 9:16 ultra-detailed cinematic visual in English showing the peak moment, 8k quality, strictly no text, letters, or watermarks",
-        "Scene 4 (Resolution): Vertical 9:16 ultra-detailed cinematic visual in English showing the powerful ending takeaway, 8k quality, strictly no text, letters, or watermarks"
-      ]
-    }}
-    """
+        Guidelines:
+        {series_rule}
+        - Hook (0-5s): A bold opening question, surprising fact, or dramatic revelation.
+        - Body (5-38s): Vivid, fast-paced storytelling with clear, authentic takeaways.
+        - Closing CTA (38-45s): Memorable final thought and a natural prompt inviting viewers to comment.
+        - Break the visual progression into 4 distinct chronological scenes matching the narration flow, keeping consistent style across all scenes.
+
+        Return ONLY valid JSON with these exact keys:
+        {{
+          "yt_title": "Catchy title under 70 chars including #Shorts and 1 niche hashtag",
+          "yt_description": "2-sentence engaging summary + 4 relevant hashtags including #Shorts",
+          "yt_tags": ["tag1", "tag2", "tag3", "tag4", "Shorts"],
+          "narration": "Clean spoken narration text ONLY (no stage directions, no brackets, ~105-115 words)",
+          "scene_prompts": [
+            "Scene 1 (Hook): Vertical 9:16 ultra-detailed cinematic visual in English matching '{topic_title}', {ch_cfg['style_guide']}, 8k quality, strictly no text, letters, or watermarks",
+            "Scene 2 (Setup): Vertical 9:16 ultra-detailed cinematic visual in English continuing the story with consistent style, 8k quality, strictly no text, letters, or watermarks",
+            "Scene 3 (Climax): Vertical 9:16 ultra-detailed cinematic visual in English showing the peak moment, 8k quality, strictly no text, letters, or watermarks",
+            "Scene 4 (Resolution): Vertical 9:16 ultra-detailed cinematic visual in English showing the powerful ending takeaway, {ch_cfg['style_guide']}, 8k quality, strictly no text, letters, or watermarks"
+          ]
+        }}
+        """
 
     story_resp = client.models.generate_content(
         model="gemini-3.8-flash",
@@ -248,6 +285,7 @@ for batch_idx, current_item in enumerate(batch_items, start=1):
         config=types.GenerateContentConfig(response_mime_type="application/json"),
     )
     story_data = json.loads(story_resp.text)
+    final_narration = custom_script if custom_script else story_data["narration"]
     scene_prompts = story_data.get("scene_prompts", [])[:5]
     if len(scene_prompts) < 3:
         raise RuntimeError(f"Expected at least 3 scene prompts, got {len(scene_prompts)}")
@@ -256,15 +294,27 @@ for batch_idx, current_item in enumerate(batch_items, start=1):
     print(f"Scenes planned: {len(scene_prompts)}")
 
     if DRY_RUN:
-        print("Narration preview:", story_data["narration"][:140] + "...")
+        print("Narration preview:", final_narration[:140] + "...")
         continue
 
     scene_images = []
     for s_idx, prompt in enumerate(scene_prompts, start=1):
-        print(f"  Painting Scene {s_idx}/{len(scene_prompts)}...")
+        use_character = character_ref_img is not None and s_idx in (1, len(scene_prompts))
+        if use_character:
+            print(f"  Painting Scene {s_idx}/{len(scene_prompts)} with [{ch_name}] styled character...")
+            char_prompt = (
+                f"Maintain the exact facial identity, features, and likeness of the person in the attached reference image. "
+                f"Show this exact person as an engaging host presenting directly to the camera, {ch_cfg['character_style']}. "
+                f"Scene context: {prompt}. Vertical 9:16 framing, medium close-up portrait, 8k cinematic lighting, strictly no text or watermarks."
+            )
+            gen_contents = [character_ref_img, char_prompt]
+        else:
+            print(f"  Painting Scene {s_idx}/{len(scene_prompts)}...")
+            gen_contents = prompt
+
         img_resp = client.models.generate_content(
             model="gemini-2.5-flash-image",
-            contents=prompt,
+            contents=gen_contents,
             config=types.GenerateContentConfig(
                 response_modalities=["IMAGE"],
                 image_config=types.ImageConfig(aspect_ratio="9:16"),
@@ -283,7 +333,7 @@ for batch_idx, current_item in enumerate(batch_items, start=1):
         scene_images.append(img_path)
 
     print(f"  Synthesizing {item_lang} voiceover...")
-    synthesis_input = texttospeech.SynthesisInput(text=story_data["narration"])
+    synthesis_input = texttospeech.SynthesisInput(text=final_narration)
     voice = texttospeech.VoiceSelectionParams(
         language_code=item_cfg["tts_code"],
         name=item_cfg["voice_name"],
@@ -305,7 +355,7 @@ for batch_idx, current_item in enumerate(batch_items, start=1):
     ]).decode().strip()
     duration = float(probe)
 
-    words = story_data["narration"].split()
+    words = final_narration.split()
     chunk_size = 4
     chunks = [" ".join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size)]
     time_per_chunk = duration / max(len(chunks), 1)
