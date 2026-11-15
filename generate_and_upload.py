@@ -18,7 +18,6 @@ VIDEO_IDEA = os.environ.get("VIDEO_IDEA", "").strip()
 VIDEO_COUNT = max(1, min(int(os.environ.get("VIDEO_COUNT", "3")), 5))
 TARGET_CHANNEL = os.environ.get("TARGET_CHANNEL", "Auto-Detect from Idea").strip()
 GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "").strip()
-CHARACTER_REF_PATH = "character.png"
 
 if DRY_RUN:
     print("=== DRY RUN MODE ENABLED (Skipping image gen, FFmpeg render, YouTube upload & Sheet tick) ===")
@@ -28,55 +27,63 @@ CHANNEL_CONFIG = {
         "env_secret": "YT_TOKEN_BHAKTI_MARG",
         "niche_desc": "Hindu spirituality, sacred temples, deities, mantras, and devotional mythology",
         "style_guide": "Reverent, mystical, devotional storytelling with sacred temple lighting and divine cosmic aesthetics.",
-        "character_style": "wearing traditional saffron and cream silk devotional kurta with subtle tilak and rudraksha beads, standing in a warm diya-lit ancient Hindu temple courtyard"
+        "character_style": "an Indian male host wearing a traditional saffron and cream silk devotional kurta with subtle tilak and rudraksha beads, standing in a warm diya-lit ancient Hindu temple courtyard"
     },
     "Biography of Hindu Saints": {
         "env_secret": "YT_TOKEN_HINDU_SAINTS",
         "niche_desc": "Life stories, miracles, teachings, and spiritual journeys of Hindu saints, yogis, and gurus",
         "style_guide": "Biographical, inspiring, historically grounded storytelling highlighting the saint's life, ashram, and core spiritual message.",
-        "character_style": "wearing a serene off-white khadi linen kurta with a warm, wise storyteller expression, seated in a peaceful Himalayan ashram library at golden hour"
+        "character_style": "an Indian male storyteller wearing a serene off-white khadi linen kurta with a warm, wise expression, seated in a peaceful Himalayan ashram library at golden hour"
     },
     "The Lean Bites": {
         "env_secret": "YT_TOKEN_LEAN_BITES",
         "niche_desc": "High-protein vegetarian and egg-inclusive diets, muscle-building nutrition, healthy low-glycemic recipes, and fat-loss science",
         "style_guide": "Crisp, practical, science-backed nutrition storytelling with appetizing macro-friendly food photography and clean vibrant visuals.",
-        "character_style": "wearing a crisp modern fitted dark-olive athletic t-shirt with an energetic, trustworthy nutrition coach demeanor, standing in a bright modern kitchen with fresh high-protein ingredients"
+        "character_style": "an athletic Indian male nutrition coach wearing a crisp modern fitted dark-olive crew-neck t-shirt with an energetic, trustworthy demeanor, standing in a bright modern kitchen with fresh high-protein ingredients"
     },
     "I am Abhinanden": {
         "env_secret": "YOUTUBE_TOKEN_JSON",
         "niche_desc": "General stories, personal insights, experiments, and miscellaneous educational topics",
         "style_guide": "Engaging, clear, modern storytelling with high-contrast cinematic visuals.",
-        "character_style": "wearing smart-casual modern jacket in a sleek, warmly lit studio background"
+        "character_style": "an Indian male host wearing a smart-casual modern jacket in a sleek, warmly lit studio background"
     }
 }
 
 SHEET_TABS = ["Bhakti Marg", "Biography of Hindu Saints", "The Lean Bites"]
 
+# All Male Google Cloud TTS Voices
 VOICE_MAP = {
     "Hindi": {
         "tts_code": "hi-IN",
-        "voice_name": "hi-IN-Neural2-B",
+        "voice_name": "hi-IN-Neural2-B",  # Male Hindi Neural2
         "font": "Noto Sans Devanagari",
         "script_instruction": "Write in natural, engaging spoken Hindi (Devanagari script), keeping #Shorts in English."
     },
     "English": {
         "tts_code": "en-IN",
-        "voice_name": "en-IN-Neural2-D",
+        "voice_name": "en-IN-Neural2-B",  # Male Indian English Neural2
         "font": "Noto Sans",
         "script_instruction": "Write in natural, gripping Indian English."
     },
     "Bengali": {
         "tts_code": "bn-IN",
-        "voice_name": "bn-IN-Wavenet-B",
+        "voice_name": "bn-IN-Wavenet-B",  # Male Bengali WaveNet
         "font": "Noto Sans Bengali",
         "script_instruction": "Write in natural, engaging spoken Bengali (Bengali script), keeping #Shorts in English."
     }
 }
 
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-character_ref_img = Image.open(CHARACTER_REF_PATH) if os.path.exists(CHARACTER_REF_PATH) else None
-if character_ref_img:
-    print(f"Loaded character reference image: {CHARACTER_REF_PATH}")
+
+# Auto-detect character image in repository root regardless of extension or casing
+character_ref_img = None
+for fname in os.listdir("."):
+    if fname.lower() in ("character.png", "character.jpg", "character.jpeg", "character.webp"):
+        character_ref_img = Image.open(fname)
+        print(f"SUCCESS: Loaded male character reference image -> {fname}")
+        break
+if not character_ref_img:
+    print("WARNING: No character.(png/jpg/jpeg/webp) found in repo root — running without character.")
 
 def get_sheets_client():
     if not GOOGLE_SHEET_ID:
@@ -217,7 +224,7 @@ for batch_idx, current_item in enumerate(batch_items, start=1):
     custom_script = current_item["custom_script"]
     item_cfg = VOICE_MAP.get(item_lang, VOICE_MAP["Hindi"])
 
-    print(f"\n--- [{batch_idx}/{len(batch_items)}] Channel: {ch_name} | Lang: {item_lang} | Episode: {topic_title} ---")
+    print(f"\n--- [{batch_idx}/{len(batch_items)}] Channel: {ch_name} | Lang: {item_lang} ({item_cfg['voice_name']}) | Episode: {topic_title} ---")
 
     if custom_script:
         print("Using your Custom Script from Column G!")
@@ -301,11 +308,14 @@ for batch_idx, current_item in enumerate(batch_items, start=1):
     for s_idx, prompt in enumerate(scene_prompts, start=1):
         use_character = character_ref_img is not None and s_idx in (1, len(scene_prompts))
         if use_character:
-            print(f"  Painting Scene {s_idx}/{len(scene_prompts)} with [{ch_name}] styled character...")
+            print(f"  Painting Scene {s_idx}/{len(scene_prompts)} with [{ch_name}] styled male character...")
             char_prompt = (
-                f"Maintain the exact facial identity, features, and likeness of the person in the attached reference image. "
-                f"Show this exact person as an engaging host presenting directly to the camera, {ch_cfg['character_style']}. "
-                f"Scene context: {prompt}. Vertical 9:16 framing, medium close-up portrait, 8k cinematic lighting, strictly no text or watermarks."
+                f"SUBJECT LOCK: The main foreground subject MUST be the exact same Indian man shown in the attached reference image "
+                f"(preserve identical facial structure, eyes, nose, jawline, beard/hairstyle, skin tone, and likeness). "
+                f"Framing: Vertical 9:16 waist-up medium close-up portrait of this exact man looking directly into the camera and speaking passionately to the viewer, "
+                f"{ch_cfg['character_style']}. "
+                f"Background setting subtly blurred behind him: {prompt}. "
+                f"Photorealistic 8k studio portrait lighting, sharp focus on his face, strictly no text, letters, or watermarks."
             )
             gen_contents = [character_ref_img, char_prompt]
         else:
@@ -332,7 +342,7 @@ for batch_idx, current_item in enumerate(batch_items, start=1):
             raise RuntimeError(f"No image bytes returned for batch {batch_idx} scene {s_idx}.")
         scene_images.append(img_path)
 
-    print(f"  Synthesizing {item_lang} voiceover...")
+    print(f"  Synthesizing {item_lang} male voiceover ({item_cfg['voice_name']})...")
     synthesis_input = texttospeech.SynthesisInput(text=final_narration)
     voice = texttospeech.VoiceSelectionParams(
         language_code=item_cfg["tts_code"],
