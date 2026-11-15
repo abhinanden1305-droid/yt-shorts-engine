@@ -75,13 +75,18 @@ VOICE_MAP = {
 
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
-# Auto-detect character image in repository root regardless of extension or casing
+# Auto-detect character image and optional background music in repository root
 character_ref_img = None
+bgm_path = None
 for fname in os.listdir("."):
-    if fname.lower() in ("character.png", "character.jpg", "character.jpeg", "character.webp"):
+    low = fname.lower()
+    if low.startswith("character.") and low.endswith((".png", ".jpg", ".jpeg", ".webp")):
         character_ref_img = Image.open(fname)
         print(f"SUCCESS: Loaded male character reference image -> {fname}")
-        break
+    elif low == "bgm.mp3":
+        bgm_path = fname
+        print(f"SUCCESS: Loaded background music track -> {fname}")
+
 if not character_ref_img:
     print("WARNING: No character.(png/jpg/jpeg/webp) found in repo root — running without character.")
 
@@ -236,7 +241,7 @@ for batch_idx, current_item in enumerate(batch_items, start=1):
         Pre-written Narration: "{custom_script}"
         Metadata Language Rule: {item_cfg["script_instruction"]}
 
-        Create YouTube metadata (yt_title, yt_description, yt_tags) and 4 chronological visual scene prompts matching the exact flow of the Pre-written Narration above.
+        Create YouTube metadata (yt_title, yt_description, yt_tags) and 6 fast-paced chronological visual scene prompts matching the exact flow of the Pre-written Narration above.
 
         Return ONLY valid JSON with these exact keys:
         {{
@@ -245,9 +250,11 @@ for batch_idx, current_item in enumerate(batch_items, start=1):
           "yt_tags": ["tag1", "tag2", "tag3", "tag4", "Shorts"],
           "scene_prompts": [
             "Scene 1 (Hook): Vertical 9:16 ultra-detailed cinematic visual in English matching the opening hook, {ch_cfg['style_guide']}, 8k quality, strictly no text, letters, or watermarks",
-            "Scene 2 (Setup): Vertical 9:16 ultra-detailed cinematic visual in English matching the second part of the narration with consistent style, 8k quality, strictly no text, letters, or watermarks",
-            "Scene 3 (Climax): Vertical 9:16 ultra-detailed cinematic visual in English matching the climax of the narration, 8k quality, strictly no text, letters, or watermarks",
-            "Scene 4 (Resolution): Vertical 9:16 ultra-detailed cinematic visual in English matching the ending takeaway, {ch_cfg['style_guide']}, 8k quality, strictly no text, letters, or watermarks"
+            "Scene 2 (Beat 1): Vertical 9:16 ultra-detailed cinematic visual in English illustrating the first key point, {ch_cfg['style_guide']}, 8k quality, strictly no text, letters, or watermarks",
+            "Scene 3 (Beat 2): Vertical 9:16 ultra-detailed cinematic visual in English illustrating the second key point, {ch_cfg['style_guide']}, 8k quality, strictly no text, letters, or watermarks",
+            "Scene 4 (Climax): Vertical 9:16 ultra-detailed cinematic visual in English showing the dramatic peak or core revelation, {ch_cfg['style_guide']}, 8k quality, strictly no text, letters, or watermarks",
+            "Scene 5 (Takeaway): Vertical 9:16 ultra-detailed cinematic visual in English illustrating the practical takeaway, {ch_cfg['style_guide']}, 8k quality, strictly no text, letters, or watermarks",
+            "Scene 6 (Outro): Vertical 9:16 ultra-detailed cinematic visual in English showing an inspiring closing scene, {ch_cfg['style_guide']}, 8k quality, strictly no text, letters, or watermarks"
           ]
         }}
         """
@@ -258,7 +265,7 @@ for batch_idx, current_item in enumerate(batch_items, start=1):
             if series_name else ""
         )
         script_prompt = f"""
-        Create a gripping, high-retention 45-second YouTube Short script with a 4-scene visual storyboard.
+        Create a gripping, high-retention 45-second YouTube Short script with a 6-scene fast-paced visual storyboard.
         Target Channel: "{ch_name}" ({ch_cfg['niche_desc']})
         Visual & Tone Style: {ch_cfg['style_guide']}
         Episode Topic: "{topic_title}"
@@ -269,7 +276,7 @@ for batch_idx, current_item in enumerate(batch_items, start=1):
         - Hook (0-5s): A bold opening question, surprising fact, or dramatic revelation.
         - Body (5-38s): Vivid, fast-paced storytelling with clear, authentic takeaways.
         - Closing CTA (38-45s): Memorable final thought and a natural prompt inviting viewers to comment.
-        - Break the visual progression into 4 distinct chronological scenes matching the narration flow, keeping consistent style across all scenes.
+        - Break the visual progression into 6 distinct chronological scenes matching the narration flow, keeping consistent style across all scenes.
 
         Return ONLY valid JSON with these exact keys:
         {{
@@ -279,9 +286,11 @@ for batch_idx, current_item in enumerate(batch_items, start=1):
           "narration": "Clean spoken narration text ONLY (no stage directions, no brackets, ~105-115 words)",
           "scene_prompts": [
             "Scene 1 (Hook): Vertical 9:16 ultra-detailed cinematic visual in English matching '{topic_title}', {ch_cfg['style_guide']}, 8k quality, strictly no text, letters, or watermarks",
-            "Scene 2 (Setup): Vertical 9:16 ultra-detailed cinematic visual in English continuing the story with consistent style, 8k quality, strictly no text, letters, or watermarks",
-            "Scene 3 (Climax): Vertical 9:16 ultra-detailed cinematic visual in English showing the peak moment, 8k quality, strictly no text, letters, or watermarks",
-            "Scene 4 (Resolution): Vertical 9:16 ultra-detailed cinematic visual in English showing the powerful ending takeaway, {ch_cfg['style_guide']}, 8k quality, strictly no text, letters, or watermarks"
+            "Scene 2 (Beat 1): Vertical 9:16 ultra-detailed cinematic visual in English illustrating the first key point, {ch_cfg['style_guide']}, 8k quality, strictly no text, letters, or watermarks",
+            "Scene 3 (Beat 2): Vertical 9:16 ultra-detailed cinematic visual in English illustrating the second key point, {ch_cfg['style_guide']}, 8k quality, strictly no text, letters, or watermarks",
+            "Scene 4 (Climax): Vertical 9:16 ultra-detailed cinematic visual in English showing the dramatic peak moment, {ch_cfg['style_guide']}, 8k quality, strictly no text, letters, or watermarks",
+            "Scene 5 (Takeaway): Vertical 9:16 ultra-detailed cinematic visual in English illustrating the practical takeaway, {ch_cfg['style_guide']}, 8k quality, strictly no text, letters, or watermarks",
+            "Scene 6 (Outro): Vertical 9:16 ultra-detailed cinematic visual in English showing an inspiring closing scene, {ch_cfg['style_guide']}, 8k quality, strictly no text, letters, or watermarks"
           ]
         }}
         """
@@ -293,7 +302,7 @@ for batch_idx, current_item in enumerate(batch_items, start=1):
     )
     story_data = json.loads(story_resp.text)
     final_narration = custom_script if custom_script else story_data["narration"]
-    scene_prompts = story_data.get("scene_prompts", [])[:5]
+    scene_prompts = story_data.get("scene_prompts", [])[:6]
     if len(scene_prompts) < 3:
         raise RuntimeError(f"Expected at least 3 scene prompts, got {len(scene_prompts)}")
 
@@ -306,20 +315,21 @@ for batch_idx, current_item in enumerate(batch_items, start=1):
 
     scene_images = []
     for s_idx, prompt in enumerate(scene_prompts, start=1):
-        use_character = character_ref_img is not None and s_idx in (1, len(scene_prompts))
-        if use_character:
-            print(f"  Painting Scene {s_idx}/{len(scene_prompts)} with [{ch_name}] styled male character...")
+        # Use male character ONLY in Scene 1 (Hook) with strict eye-level 50mm waist-up framing
+        if character_ref_img is not None and s_idx == 1:
+            print(f"  Painting Scene {s_idx}/{len(scene_prompts)} with [{ch_name}] styled male host (50mm eye-level)...")
             char_prompt = (
                 f"SUBJECT LOCK: The main foreground subject MUST be the exact same Indian man shown in the attached reference image "
-                f"(preserve identical facial structure, eyes, nose, jawline, beard/hairstyle, skin tone, and likeness). "
-                f"Framing: Vertical 9:16 waist-up medium close-up portrait of this exact man looking directly into the camera and speaking passionately to the viewer, "
-                f"{ch_cfg['character_style']}. "
-                f"Background setting subtly blurred behind him: {prompt}. "
+                f"(preserve identical facial structure, glasses/eyes, nose, jawline, beard/hairstyle, skin tone, and likeness). "
+                f"Camera & Framing: Vertical 9:16 waist-up medium portrait shot filmed at eye level on a 50mm lens with comfortable headroom, "
+                f"strictly never a close-up or wide-angle selfie perspective. "
+                f"Pose & Outfit: This exact man looking directly into the camera and speaking warmly to the viewer, {ch_cfg['character_style']}. "
+                f"Background setting softly blurred with shallow depth of field: {prompt}. "
                 f"Photorealistic 8k studio portrait lighting, sharp focus on his face, strictly no text, letters, or watermarks."
             )
             gen_contents = [character_ref_img, char_prompt]
         else:
-            print(f"  Painting Scene {s_idx}/{len(scene_prompts)}...")
+            print(f"  Painting Scene {s_idx}/{len(scene_prompts)} (B-roll)...")
             gen_contents = prompt
 
         img_resp = client.models.generate_content(
@@ -350,7 +360,7 @@ for batch_idx, current_item in enumerate(batch_items, start=1):
     )
     audio_config = texttospeech.AudioConfig(
         audio_encoding=texttospeech.AudioEncoding.MP3,
-        speaking_rate=0.97,
+        speaking_rate=0.98,
     )
     tts_response = tts_client.synthesize_speech(
         input=synthesis_input, voice=voice, audio_config=audio_config
@@ -365,8 +375,9 @@ for batch_idx, current_item in enumerate(batch_items, start=1):
     ]).decode().strip()
     duration = float(probe)
 
+    # Larger, high-contrast mobile subtitles (3 words per punchy pop)
     words = final_narration.split()
-    chunk_size = 4
+    chunk_size = 3
     chunks = [" ".join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size)]
     time_per_chunk = duration / max(len(chunks), 1)
 
@@ -379,7 +390,7 @@ WrapStyle: 2
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{item_cfg['font']},54,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,2,2,70,70,360,1
+Style: Default,{item_cfg['font']},72,&H0000E5FF,&H00FFFFFF,&H00000000,&H99000000,-1,0,0,0,100,100,0,0,1,5,3,2,65,65,460,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -391,18 +402,26 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             end_t = fmt_ass_time(min(c_idx * time_per_chunk, duration))
             f.write(f"Dialogue: 0,{start_t},{end_t},Default,,0,0,0,,{chunk}\n")
 
-    print(f"  Rendering {len(scene_images)} animated scenes...")
+    print(f"  Rendering {len(scene_images)} dynamic animated scenes...")
     total_video_duration = duration + 0.5
     scene_duration = total_video_duration / len(scene_images)
     scene_frames = int(scene_duration * 30) + 5
 
+    # Varied camera motion per scene (zoom-in, pan-right, zoom-out, pan-left)
+    motion_presets = [
+        ("min(zoom+0.0009,1.14)", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"),
+        ("1.12", "min(on*1.2, iw-iw/zoom)", "ih/2-(ih/zoom/2)"),
+        ("max(1.14-0.0009*on,1.0)", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"),
+        ("1.12", "max((iw-iw/zoom)-on*1.2, 0)", "ih/2-(ih/zoom/2)"),
+    ]
+
     clip_files = []
     for s_idx, img_path in enumerate(scene_images, start=1):
         clip_path = f"b{batch_idx}_clip_{s_idx}.mp4"
-        zoom_expr = "min(zoom+0.0008,1.15)" if s_idx % 2 == 1 else "max(1.15-0.0008*on,1.0)"
+        z_expr, x_expr, y_expr = motion_presets[(s_idx - 1) % len(motion_presets)]
         scene_vf = (
             f"scale=2160:3840,"
-            f"zoompan=z='{zoom_expr}':d={scene_frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30"
+            f"zoompan=z='{z_expr}':d={scene_frames}:x='{x_expr}':y='{y_expr}':s=1080x1920:fps=30"
         )
         subprocess.run([
             "ffmpeg", "-y",
@@ -428,16 +447,33 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     ], check=True)
 
     output_video = f"b{batch_idx}_final_short.mp4"
-    subprocess.run([
-        "ffmpeg", "-y",
-        "-i", stitched_video,
-        "-i", audio_path,
-        "-vf", f"ass={ass_path}",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k",
-        "-shortest",
-        output_video
-    ], check=True)
+    if bgm_path:
+        print("  Mixing subtle background music (12% volume) + high-contrast subtitles...")
+        subprocess.run([
+            "ffmpeg", "-y",
+            "-i", stitched_video,
+            "-i", audio_path,
+            "-stream_loop", "-1", "-i", bgm_path,
+            "-filter_complex", "[2:a]volume=0.12[bg];[1:a][bg]amix=inputs=2:duration=first:dropout_transition=2[aout]",
+            "-map", "0:v",
+            "-map", "[aout]",
+            "-vf", f"ass={ass_path}",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest",
+            output_video
+        ], check=True)
+    else:
+        subprocess.run([
+            "ffmpeg", "-y",
+            "-i", stitched_video,
+            "-i", audio_path,
+            "-vf", f"ass={ass_path}",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest",
+            output_video
+        ], check=True)
 
     print(f"  Uploading to [{ch_name}] as Unlisted...")
     body = {
