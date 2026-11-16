@@ -1,15 +1,13 @@
 import os
 import subprocess
-from PIL import Image
+from PIL import Image, ImageOps
 from google import genai
 from google.genai import types
 from google.cloud import texttospeech
 
-# Ensure GEMINI_API_KEY and GOOGLE_APPLICATION_CREDENTIALS are set in your environment
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 tts_client = texttospeech.TextToSpeechClient()
 
-# Auto-detect optional character reference & background music in current directory
 character_ref_img = None
 bgm_path = None
 for fname in os.listdir("."):
@@ -24,6 +22,7 @@ for fname in os.listdir("."):
 CHAPTERS = [
     {
         "title": "01. The $0/Month Multi-Channel Shorts Architecture",
+        "screenshot": None,
         "use_character": True,
         "visual_prompt": (
             "Widescreen 16:9 clean modern tech studio backdrop showing glowing holographic workflow diagrams "
@@ -41,11 +40,9 @@ CHAPTERS = [
     },
     {
         "title": "02. Step 1: Google Cloud Project, APIs & Service Account",
+        "screenshot": "step1_gcp.png",
         "use_character": False,
-        "visual_prompt": (
-            "Widescreen 16:9 sleek futuristic isometric illustration of cloud server infrastructure with three glowing API keycards "
-            "and a secure golden shield lock, clean dark slate background, cinematic lighting, 8k quality, strictly no text"
-        ),
+        "visual_prompt": "Widescreen 16:9 sleek futuristic isometric illustration of cloud server infrastructure, dark slate background, 8k quality, strictly no text",
         "narration": (
             "Everything starts in Google Cloud Console. First, create a clean project—let's call it shorts-pipeline—and link your billing account "
             "so you unlock the generous free monthly tiers. Next, head to the API Library and enable three exact APIs: Cloud Text-to-Speech API "
@@ -59,11 +56,9 @@ CHAPTERS = [
     },
     {
         "title": "03. Step 2: Gemini API Key & Google Sheet Series Planner",
+        "screenshot": "step2_sheet.png",
         "use_character": False,
-        "visual_prompt": (
-            "Widescreen 16:9 ultra-clean modern digital workspace illustration featuring an organized green grid spreadsheet "
-            "with glowing checkmarks connected to an AI neural crystal, soft studio lighting, 8k quality, strictly no text"
-        ),
+        "visual_prompt": "Widescreen 16:9 ultra-clean modern digital workspace illustration featuring an organized green grid spreadsheet, 8k quality, strictly no text",
         "narration": (
             "Next, jump over to Google AI Studio, click Get API Key, and attach it to the exact same Google Cloud project. That single key gives us "
             "access to Gemini Flash for structured JSON storyboarding and Gemini Flash Image for painting our vertical scenes. Now let's build the "
@@ -76,11 +71,9 @@ CHAPTERS = [
     },
     {
         "title": "04. Step 3: Multi-Channel YouTube OAuth Refresh Tokens",
+        "screenshot": "step3_oauth.png",
         "use_character": False,
-        "visual_prompt": (
-            "Widescreen 16:9 digital security concept showing three glowing golden access tokens unlocking three separate red video broadcast screens, "
-            "sleek dark studio background, dramatic lighting, 8k quality, strictly no text"
-        ),
+        "visual_prompt": "Widescreen 16:9 digital security concept showing three glowing golden access tokens unlocking video broadcast screens, 8k quality, strictly no text",
         "narration": (
             "Here is the trick that makes multi-channel publishing seamless. Open Google OAuth 2.0 Playground in a fresh browser tab, click the gear "
             "icon in the top right, check Use your own OAuth credentials, and paste your Client ID and Client Secret. Under Step 1, expand YouTube "
@@ -92,11 +85,9 @@ CHAPTERS = [
     },
     {
         "title": "05. Step 4: GitHub Actions & Twice-Daily Cron Schedule",
+        "screenshot": "step4_github.png",
         "use_character": False,
-        "visual_prompt": (
-            "Widescreen 16:9 modern cloud automation illustration showing an automated clockwork gear triggering a Python code pipeline inside a "
-            "dark-mode developer server rack at 6 AM and 6 PM, glowing cyan and emerald accents, 8k quality, strictly no text"
-        ),
+        "visual_prompt": "Widescreen 16:9 modern cloud automation illustration showing an automated clockwork gear triggering a Python pipeline, 8k quality, strictly no text",
         "narration": (
             "Now let's move our engine to the cloud for free. Create a GitHub repository called yt-shorts-engine and store all your keys inside "
             "Repository Secrets: your Gemini API key, your Service Account JSON, your Google Sheet ID, and your three channel refresh tokens. "
@@ -108,11 +99,9 @@ CHAPTERS = [
     },
     {
         "title": "06. Step 5: Consistent Male AI Host Across All 3 Channels",
+        "screenshot": "step5_character.png",
         "use_character": False,
-        "visual_prompt": (
-            "Widescreen 16:9 split-screen triptych studio showcase showing three distinct cinematic themes: a warm diya-lit temple courtyard on the left, "
-            "a peaceful Himalayan ashram library in the center, and a bright modern healthy kitchen on the right, 8k quality, strictly no text"
-        ),
+        "visual_prompt": "Widescreen 16:9 split-screen triptych studio showcase showing three distinct cinematic themes, 8k quality, strictly no text",
         "narration": (
             "To give all three channels a recognizable human anchor without filming every day, I exported a single base male character portrait from "
             "Google Flow and uploaded it to the root of our GitHub repository. In our Python script, Scene 1—our opening hook—locks onto that exact "
@@ -124,11 +113,9 @@ CHAPTERS = [
     },
     {
         "title": "07. Step 6: Batching Episodes with Claude & Live Automated Run",
+        "screenshot": "step6_claude.png",
         "use_character": False,
-        "visual_prompt": (
-            "Widescreen 16:9 clean modern productivity scene showing an AI chat assistant outputting structured data rows that flow seamlessly into "
-            "a cloud video rendering pipeline, warm cinematic lighting, 8k quality, strictly no text"
-        ),
+        "visual_prompt": "Widescreen 16:9 clean modern productivity scene showing an AI chat assistant outputting structured rows into a pipeline, 8k quality, strictly no text",
         "narration": (
             "How do we keep the content queue full? Once a week, I run a structured prompt in Claude that outputs a clean seven-column Markdown table "
             "with 100-to-115-word spoken narration scripts in Column G. I highlight the rows, press Copy, click into Google Sheets, and press Paste—"
@@ -139,6 +126,7 @@ CHAPTERS = [
     },
     {
         "title": "08. Quotas, Scaling Limits & Next Steps",
+        "screenshot": None,
         "use_character": True,
         "visual_prompt": (
             "Widescreen 16:9 sleek modern studio backdrop with subtle upward growth charts and glowing checkmarks, warm golden-hour lighting, "
@@ -161,12 +149,23 @@ def fmt_ass_time(sec):
     cs = int((sec - int(sec)) * 100)
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
+def prepare_screenshot_slide(screenshot_path, out_path):
+    """Places any UI screenshot cleanly inside a 1920x1080 dark studio canvas with safe padding for banner & captions."""
+    canvas = Image.new("RGB", (1920, 1080), (15, 23, 42))  # Deep slate studio background
+    shot = Image.open(screenshot_path).convert("RGB")
+    # Fit inside 1660x760 safe area so top banner and bottom captions never cover UI details
+    shot.thumbnail((1660, 760), Image.Resampling.LANCZOS)
+    bordered = ImageOps.expand(shot, border=4, fill=(56, 189, 248))  # Subtle cyan accent frame
+    x = (1920 - bordered.width) // 2
+    y = (1080 - bordered.height) // 2 - 10
+    canvas.paste(bordered, (x, y))
+    canvas.save(out_path, "PNG")
+
 chapter_clips = []
 
 for idx, ch in enumerate(CHAPTERS, start=1):
     print(f"\n=== Building Chapter {idx}/{len(CHAPTERS)}: {ch['title']} ===")
 
-    # 1. Synthesize Chapter Narration (Male Indian English Neural2)
     synthesis_input = texttospeech.SynthesisInput(text=ch["narration"])
     voice = texttospeech.VoiceSelectionParams(
         language_code="en-IN",
@@ -188,33 +187,38 @@ for idx, ch in enumerate(CHAPTERS, start=1):
         "-of", "default=noprint_wrappers=1:nokey=1", audio_file
     ]).decode().strip())
 
-    # 2. Generate 16:9 Widescreen Visual
-    if ch["use_character"] and character_ref_img is not None:
-        prompt = (
-            f"SUBJECT LOCK: Keep the exact facial identity, glasses/eyes, nose, jawline, and likeness of the Indian man in the reference image. "
-            f"Widescreen 16:9 medium waist-up shot filmed at eye level on a 50mm lens, wearing a smart-casual dark jacket in a modern YouTube creator studio, "
-            f"speaking engagingly toward the camera. Background: {ch['visual_prompt']}"
-        )
-        gen_contents = [character_ref_img, prompt]
-    else:
-        gen_contents = ch["visual_prompt"]
-
-    img_resp = client.models.generate_content(
-        model="gemini-2.5-flash-image",
-        contents=gen_contents,
-        config=types.GenerateContentConfig(
-            response_modalities=["IMAGE"],
-            image_config=types.ImageConfig(aspect_ratio="16:9"),
-        ),
-    )
     img_file = f"tut_ch_{idx}.png"
-    for part in img_resp.candidates[0].content.parts:
-        if part.inline_data is not None:
-            with open(img_file, "wb") as f:
-                f.write(part.inline_data.data)
-            break
+    shot_name = ch.get("screenshot")
+    if shot_name and os.path.exists(shot_name):
+        print(f"  Using real application screenshot -> {shot_name}")
+        prepare_screenshot_slide(shot_name, img_file)
+    else:
+        if shot_name:
+            print(f"  Screenshot '{shot_name}' not found — generating AI visual fallback...")
+        if ch["use_character"] and character_ref_img is not None:
+            prompt = (
+                f"SUBJECT LOCK: Keep the exact facial identity, glasses/eyes, nose, jawline, and likeness of the Indian man in the reference image. "
+                f"Widescreen 16:9 medium waist-up shot filmed at eye level on a 50mm lens, wearing a smart-casual dark jacket in a modern YouTube creator studio, "
+                f"speaking engagingly toward the camera. Background: {ch['visual_prompt']}"
+            )
+            gen_contents = [character_ref_img, prompt]
+        else:
+            gen_contents = ch["visual_prompt"]
 
-    # 3. Generate Chapter Banner + Clean Lower-Third Subtitles (ASS)
+        img_resp = client.models.generate_content(
+            model="gemini-2.5-flash-image",
+            contents=gen_contents,
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+                image_config=types.ImageConfig(aspect_ratio="16:9"),
+            ),
+        )
+        for part in img_resp.candidates[0].content.parts:
+            if part.inline_data is not None:
+                with open(img_file, "wb") as f:
+                    f.write(part.inline_data.data)
+                break
+
     ass_file = f"tut_ch_{idx}.ass"
     words = ch["narration"].split()
     chunk_size = 8
@@ -229,8 +233,8 @@ WrapStyle: 2
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Banner,Noto Sans,46,&H0000E5FF,&H00FFFFFF,&H00000000,&HAA000000,-1,0,0,0,100,100,0,0,3,14,0,7,60,60,45,1
-Style: Caption,Noto Sans,44,&H00FFFFFF,&H0000E5FF,&H00000000,&H99000000,-1,0,0,0,100,100,0,0,1,3,2,2,120,120,55,1
+Style: Banner,Noto Sans,44,&H0000E5FF,&H00FFFFFF,&H00000000,&HAA000000,-1,0,0,0,100,100,0,0,3,12,0,7,60,60,35,1
+Style: Caption,Noto Sans,42,&H00FFFFFF,&H0000E5FF,&H00000000,&H99000000,-1,0,0,0,100,100,0,0,1,3,2,2,120,120,45,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -243,10 +247,11 @@ Dialogue: 1,0:00:00.00,{fmt_ass_time(duration)},Banner,,0,0,0,,  {ch['title']}
             et = fmt_ass_time(min(c_idx * time_per_chunk, duration))
             f.write(f"Dialogue: 0,{st},{et},Caption,,0,0,0,,{chunk}\n")
 
-    # 4. Render 1920x1080 Chapter Clip with Subtle Zoom + Overlays
     clip_dur = duration + 0.6
     frames = int(clip_dur * 30) + 5
-    z_expr = "min(zoom+0.0005,1.10)" if idx % 2 == 1 else "max(1.10-0.0005*on,1.0)"
+    # Gentle zoom on screenshots so every UI label stays crisp and readable
+    z_step = "0.00025" if (shot_name and os.path.exists(shot_name)) else "0.0005"
+    z_expr = f"min(zoom+{z_step},1.07)"
     vf = (
         f"scale=3840:2160,"
         f"zoompan=z='{z_expr}':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=30,"
@@ -265,7 +270,6 @@ Dialogue: 1,0:00:00.00,{fmt_ass_time(duration)},Banner,,0,0,0,,  {ch['title']}
     ], check=True)
     chapter_clips.append(clip_file)
 
-# 5. Concatenate All Chapters Into Final 1080p YouTube Video
 with open("tut_concat.txt", "w", encoding="utf-8") as f:
     for c in chapter_clips:
         f.write(f"file '{c}'\n")
