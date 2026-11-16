@@ -1,0 +1,44 @@
+name: Build Long-Form YouTube Tutorial (1080p)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  render-tutorial:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install FFmpeg and multilingual fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-dejavu-core fonts-noto-core
+          pip install -r requirements.txt
+
+      - name: Write GCP Service Account Key
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: python -c "import os; open('gcp_sa_key.json', 'w').write(os.environ['GCP_SA_KEY'])"
+
+      - name: Render 1080p YouTube Tutorial Video
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_APPLICATION_CREDENTIALS: gcp_sa_key.json
+        run: python build_long_video.py
+
+      - name: Upload Finished 1080p Video as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-tutorial-1080p
+          path: youtube_tutorial_1080p.mp4
+          retention-days: 7
+
+      - name: Cleanup temporary key
+        if: always()
+        run: rm -f gcp_sa_key.json
